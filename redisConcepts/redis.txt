@@ -1,0 +1,175 @@
+Imagine you build a popular online clothing store. Your application stores all user accounts, product details, inventory, and order history in a traditional relational database like MySQL or PostgreSQL.
+When a customer visits your homepage, your app executes a database query:
+SELECT * FROM products WHERE category = 'trending';
+
+🔴 The Pain Points:
+• The Disk I/O Wall: Traditional databases store data on hard drives or SSDs. Reading data from a disk requires physical or electronic search time. 
+It is relatively slow.
+• Complex Calculations: If your trending page requires joining 5 different tables together (products, reviews, inventory, discounts), 
+the database has to do heavy mathematical work every single time a user refreshes the page.
+• The Scale Crash: If 10,000 users open your app at the exact same second (like during a Black Friday sale), 
+your database gets hit with 10,000 disk-heavy queries. 
+The server CPU hits 100%, queries queue up, and your website crashes with a 504 Gateway Timeout.
+
+
+
+2. How Redis Resolves This Problem
+Redis acts as a super-fast middleman (a cache) that sits right between your application backend and your slow disk database.
+Instead of going to the disk database for every request, your application follows this flow:
+
+[User Request] ──> [Application]
+                       │
+                       ├──> (1) Check REDIS (In-Memory) ──> Found! (Fast Return)
+                       │
+                       └──> (2) If NOT in Redis ──> Check Disk DB ──> Save copy to Redis ──> Return
+
+
+
+🟢 The Resolutions:
+• RAM vs. Disk: Redis stores its data entirely in the computer's Random Access Memory (RAM). 
+Accessing RAM takes nanoseconds, whereas accessing a disk takes milliseconds. 
+Redis resolves the speed issue by eliminating disk reads completely.
+• Pre-Computed Answers: Instead of asking MySQL to calculate the "Top 10 Trending Products" over and over again, 
+your app calculates it once, converts the final list into a simple piece of text, and saves it in Redis under the key "trending_products". 
+Now, fetching that list takes sub-millisecond time.
+• Protecting the Core Database: Because 90% of your users are looking at cached data in Redis, your main MySQL/PostgreSQL database breathes easy. 
+It only handles critical write operations, like when someone actually clicks "Buy Now" and creates an order.
+
+
+PostgreSQL handles your permanent, structured data, 
+while Redis handles your speed and temporary data.
+
+Here is exactly how Redis solves those three problems:
+
+1. Product Lists & View Counts
+• Problem: Querying your database for huge product lists or incrementing a view_count column every single second 
+creates heavy disk write stress.
+• Redis Solution: Redis stores the pre-computed product list as a fast cache. For views, it uses atomic commands like INCR product:101:views in RAM. 
+You can sync these counts back to PostgreSQL in bulk once an hour rather than every second.
+
+2. Rate Limiting (Request Limits)
+• Problem: Malicious bots or scrapers can spam your API, overloading your application servers and PostgreSQL.
+• Redis Solution: Redis tracks requests using a user's IP or ID as a key with an expiration time (e.g., user:12.34.56.78:requests). 
+Using a command like INCR, it instantly counts requests. If the count exceeds 100 within a minute, 
+your app blocks the user immediately without ever touching PostgreSQL.
+
+3. Running Background Jobs
+• Problem: When a user checks out, sending an email or generating an invoice inside the main request thread 
+makes the user wait seconds for the page to load.
+• Redis Solution: Redis acts as a fast Message Queue (using its List or Stream structures). 
+Your app quickly pushes a job into Redis (e.g., "send_email_to_user_5") and instantly responds to the user. 
+Separate background workers pull jobs from Redis and process them asynchronously.
+
+
+# Redis Definition
+
+Redis is an ultra-fast, in-memory data store that acts as a helper to your main database (like PostgreSQL) 
+to handle speed, temporary data, and real-time operations. 
+It sits between your application and the disk, storing data in RAM to resolve performance bottlenecks by 
+serving product caches, tracking live counts, managing rate limits, and queueing background jobs in sub-milliseconds.
+
+"""
+"Redis is an in-memory database server that allows us to keep frequent data in hot memory like RAM so it can be served instantly to future requests.
+It solves the database bottleneck: if 1,000 users want the same data, instead of hitting a slow disk database 1,000 times, we fetch it from Redis once.
+ This achieves ultra-fast speed and protects our main database."
+"""
+
+
+------------Redis Datatypes----------   
+1. Strings
+--> stores one value under one key
+what this will stores?
+-plain text,Number stored as text and counters
+-binary data (like User Sessions, API Caches).
+
+--> Commands: SET, GET, INCR, DEL.
+--> Example: key:views and values:"100"
+
+2. Lists
+-->Ordered collections (First-In-First-Out or LIFO).
+--> Used for
+- Storing recent items in the order they arrived (e.g., notifications, chat messages).
+- Implementing a queue or stack for background jobs.
+Commands: LPUSH, RPUSH, LPOP, LRANGE.
+Example: LPUSH notifications "New Message" (Imagine a to-do list).
+
+3. Sets
+Unordered collections of unique items (No duplicates).
+Commands: SADD, SMEMBERS, SISMEMBER.
+Example: SADD followers "UserA" "UserB" (Great for social media followers).
+
+4. Hashes
+Stores field-value pairs (like a dictionary or JSON object).
+Commands: HSET, HGET, HGETALL.
+Example: HSET user:profile name "Atul" email "[EMAIL_ADDRESS]" (Perfect for user profiles).
+
+5. Sorted Sets (ZSets)
+Sets where each member has a score, allowing them to be sorted.
+Commands: ZADD, ZRANGE, ZSCORE.
+Example: ZADD leaderboard 100 "Player1" (Used for leaderboards).
+
+6.TTLs (Time To Live)   
+Time To Live is a property of a Redis key that specifies how long the key should exist before it is automatically deleted. 
+
+
+
+what is caching?
+
+caching is the process of storing a copy of expensive, slow-to-fetch data into a temporary,
+ ultra-fast storage layer (like RAM/Redis) so future requests for that same data can be served instantly.
+ so what this will achieves like 
+ 1.reduces the database load,
+ 2.improves the response time.
+
+  top 3 most common caching patterns?
+
+  1.Cache-Aside (Lazy Loading)
+  2.Write-Through
+  3.Read-Through
+
+  1.Cache-Aside (Lazy Loading)
+   """
+"In this pattern, the application code is responsible for loading data into the cache. When a request comes in:
+
+The application first checks the cache.
+If the data is found (cache hit), it returns it immediately.
+If not found (cache miss), it queries the database, stores the result in the cache, and then returns it.
+It’s called “lazy” because the cache is filled only when needed.
+"""
+
+"""
+APPLICATION
+│
+├──> CHECK CACHE
+│       │
+│       ├──> MISS → QUERY DB → SAVE TO CACHE → RETURN DATA
+│       │
+│       └──> HIT → RETURN DATA DIRECTLY
+│
+│
+DATABASE
+
+
+2. Read-Through / Write-Through
+• The Problem: Your application code is getting messy because developers have to constantly write if/else logic to manage both Redis and PostgreSQL.
+• How it works: The application only talks to the cache. The cache layer itself is smart enough to automatically fetch from or write to the primary PostgreSQL database behind the scenes.
+• Pros: Clean application code. The data in the cache is always fresh and never out of sync with the database.
+• Cons: More complex infrastructure setup. If a user modifies data, the application has to wait for both the cache and the disk DB to update before finishing, slowing down write operations.
+
+3. Write-Behind (Write-Back) — For High Speed Writes
+• The Problem (The View Count Problem): 10,000 users are hitting "like" or viewing a video every second. If your app writes each update directly to PostgreSQL, the disk will choke and crash.
+• How it works: The application writes data only to Redis instantly. Redis accumulates these updates (e.g., adding up view counts). Every 10 minutes, a background worker batches all the updates together and saves them to PostgreSQL in one single operation.
+• Pros: Incredibly fast write speeds. Minimizes disk database stress to almost zero.
+• Cons: Risk of data loss. If the Redis server loses power before the background worker saves to PostgreSQL, those temporary counts are permanently gone.
+
+4. Write-Through
+• The Problem: You need to guarantee that whenever data is written to the cache, it is also immediately written to the main database.
+• How it works: When the application writes data, it sends the data to Redis first. Redis writes the data to the disk database (PostgreSQL) and only confirms the write back to the application after the database confirms it too.
+• Pros: Data consistency is guaranteed. The cache and the database are always in sync.
+• Cons: Write speed is slower compared to Write-Behind because you have to wait for the disk I/O of the main database.
+
+what is Stale cache problem?
+The Stale Cache Problem occurs when data is updated or deleted in your primary database (like PostgreSQL), but the old copy remains inside your cache (Redis).
+
+2. How to Resolve the Stale Cache Problem?
+To solve this, developers use a process called Cache Invalidation—which means intentionally destroying or updating the data in Redis the moment the real database changes.
