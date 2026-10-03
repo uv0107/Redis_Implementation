@@ -2,6 +2,8 @@
 
 Backend implementation and practical concepts for Redis including Caching, Data Types, and Pub/Sub.
 
+![System Architecture](assets/architecture-diagram.jpg)
+
 ## Features
 - **Redis Data Types**: Strings, Hashes, Lists, Sets, Sorted Sets
 - **Caching**: Cache-aside pattern with Redis and PostgreSQL
